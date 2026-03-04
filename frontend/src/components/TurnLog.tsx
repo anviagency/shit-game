@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { TurnLogEntry, Agent } from '../types';
 
 interface Props {
@@ -11,7 +12,7 @@ const ACTION_ICONS: Record<string, string> = {
   propose_peace: 'P', propose_alliance: 'A', break_treaty: 'X',
 };
 
-export function TurnLog({ log, agents }: Props) {
+export const TurnLog = memo(function TurnLog({ log, agents }: Props) {
   const agentColorMap = new Map(agents.map(a => [a.id, a.color]));
   const recentLog = log.slice(-60).reverse();
 
@@ -37,7 +38,7 @@ export function TurnLog({ log, agents }: Props) {
         const isDiplomacy = ['propose_peace', 'propose_alliance', 'break_treaty'].includes(entry.action.type);
 
         return (
-          <div key={i} style={{
+          <div key={`${entry.turn}-${entry.agentId}-${i}`} style={{
             fontSize: 10,
             padding: '3px 0',
             borderBottom: '1px solid rgba(255,255,255,0.03)',
@@ -66,4 +67,4 @@ export function TurnLog({ log, agents }: Props) {
       })}
     </div>
   );
-}
+});

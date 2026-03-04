@@ -10,12 +10,13 @@ import { AnthropicProvider } from './agents/AnthropicProvider.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
-app.use(cors());
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json());
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: ALLOWED_ORIGIN, methods: ['GET', 'POST'] },
 });
 
 // Determine if we should use real LLMs
@@ -81,14 +82,17 @@ app.post('/api/game/resume', (_req, res) => {
   }
 });
 
+const VALID_SPEEDS = [4000, 2000, 1000, 400, 200, 100];
 app.post('/api/game/speed', (req, res) => {
   const { speed } = req.body;
-  if (engine && typeof speed === 'number') {
-    engine.setSpeed(speed);
-    res.json({ message: `Speed set to ${speed}ms` });
-  } else {
-    res.status(400).json({ error: 'Invalid speed or no game running' });
+  if (!engine) {
+    return res.status(400).json({ error: 'No game running' });
   }
+  if (typeof speed !== 'number' || !VALID_SPEEDS.includes(speed)) {
+    return res.status(400).json({ error: `Invalid speed. Allowed: ${VALID_SPEEDS.join(', ')}` });
+  }
+  engine.setSpeed(speed);
+  res.json({ message: `Speed set to ${speed}ms` });
 });
 
 app.post('/api/game/restart', (_req, res) => {
@@ -123,7 +127,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setSpeed', (speed: number) => {
-    engine?.setSpeed(speed);
+    if (typeof speed === 'number' && VALID_SPEEDS.includes(speed)) {
+      engine?.setSpeed(speed);
+    }
   });
 
   socket.on('restartGame', () => {

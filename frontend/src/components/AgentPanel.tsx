@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Agent } from '../types';
 
 interface Props {
@@ -13,7 +14,7 @@ function hexToRgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-export function AgentPanel({ agent, territory, isSelected, onClick, onDetail }: Props) {
+export const AgentPanel = memo(function AgentPanel({ agent, territory, isSelected, onClick, onDetail }: Props) {
   const dead = !agent.isAlive;
 
   return (
@@ -111,7 +112,7 @@ export function AgentPanel({ agent, territory, isSelected, onClick, onDetail }: 
       )}
     </div>
   );
-}
+});
 
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (

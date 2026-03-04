@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { LLMProvider } from './LLMProvider.js';
 import { logger } from '../utils/logger.js';
 
+const LLM_TIMEOUT_MS = 8000;
+
 export class AnthropicProvider implements LLMProvider {
   name = 'anthropic';
   private client: Anthropic;
@@ -13,12 +15,17 @@ export class AnthropicProvider implements LLMProvider {
   async generateResponse(systemPrompt: string, userPrompt: string): Promise<string> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const response = await this.client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-        });
+        const response = await Promise.race([
+          this.client.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1024,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('LLM timeout (8s)')), LLM_TIMEOUT_MS)
+          ),
+        ]);
         const textBlock = response.content.find(b => b.type === 'text');
         return textBlock ? textBlock.text : '{}';
       } catch (err: any) {
