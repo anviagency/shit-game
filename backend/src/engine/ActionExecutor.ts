@@ -56,6 +56,9 @@ export class ActionExecutor {
       case 'break_treaty':
         return this.diplomacyManager.breakTreaty(state, agent, action);
 
+      case 'trade':
+        return this.executeTrade(state, agent, action);
+
       default:
         return { success: false, message: `Unknown: ${action.type}` };
     }
@@ -64,6 +67,11 @@ export class ActionExecutor {
   private executeBuild(state: GameState, agent: Agent, action: Action): ActionResult {
     if (action.targetX == null || action.targetY == null || !action.buildingType) {
       return { success: false, message: 'Build missing target or type' };
+    }
+    // Pre-check with detailed reason
+    const check = this.buildingManager.canBuild(state, agent.id, action.targetX, action.targetY, action.buildingType);
+    if (!check.ok) {
+      return { success: false, message: `Cannot build ${action.buildingType}: ${check.reason}` };
     }
     const built = this.buildingManager.build(
       state, agent.id, action.targetX, action.targetY, action.buildingType,
@@ -175,6 +183,58 @@ export class ActionExecutor {
     }
     this.combatResolver.fortify(action.targetX, action.targetY);
     return { success: true, message: `Fortified (${action.targetX},${action.targetY})` };
+  }
+
+  private executeTrade(state: GameState, agent: Agent, action: Action): ActionResult {
+    if (!action.targetAgentId || !action.giveResource || !action.wantResource ||
+        action.giveAmount == null || action.wantAmount == null) {
+      return { success: false, message: 'Trade missing parameters' };
+    }
+    if (action.giveAmount <= 0 || action.wantAmount <= 0) {
+      return { success: false, message: 'Trade amounts must be positive' };
+    }
+
+    const target = state.agents.find(a => a.id === action.targetAgentId);
+    if (!target || !target.isAlive) {
+      return { success: false, message: 'Trade target not found or dead' };
+    }
+
+    // Check sender can afford
+    const giveRes = action.giveResource as keyof typeof agent.resources;
+    const wantRes = action.wantResource as keyof typeof target.resources;
+    if (agent.resources[giveRes] < action.giveAmount) {
+      return { success: false, message: `Not enough ${action.giveResource} to trade` };
+    }
+
+    // Auto-accept logic: target accepts if they have the resources and the deal is reasonable
+    // "Reasonable" = exchange ratio within 3:1 either way, and they have enough
+    if (target.resources[wantRes] < action.wantAmount) {
+      return { success: false, message: `${target.name} doesn't have enough ${action.wantResource}` };
+    }
+
+    const ratio = action.giveAmount / action.wantAmount;
+    // Very unfair trades get rejected (offering 1 for 100)
+    if (ratio < 0.2) {
+      return { success: false, message: `${target.name} rejected unfair trade offer` };
+    }
+
+    // Reputation affects acceptance — low rep agents get rejected more
+    if (agent.reputation < 20 && Math.random() > 0.3) {
+      return { success: false, message: `${target.name} doesn't trust you enough to trade` };
+    }
+
+    // Execute trade
+    agent.resources[giveRes] -= action.giveAmount;
+    target.resources[wantRes] -= action.wantAmount;
+    agent.resources[wantRes] += action.wantAmount;
+    target.resources[giveRes] += action.giveAmount;
+
+    // Both agents remember the trade
+    const tradeMsg = `Traded ${action.giveAmount} ${action.giveResource} for ${action.wantAmount} ${action.wantResource} with ${target.name}`;
+    agent.memory.push(tradeMsg);
+    target.memory.push(`${agent.name} traded ${action.giveAmount} ${action.giveResource} for ${action.wantAmount} ${action.wantResource}`);
+
+    return { success: true, message: tradeMsg };
   }
 
   /** Place trained/cloned units on the map, preferring barracks */

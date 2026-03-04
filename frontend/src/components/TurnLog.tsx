@@ -8,7 +8,7 @@ interface Props {
 
 const ACTION_ICONS: Record<string, string> = {
   gather: 'G', build: 'B', train: 'T', clone: 'C', move: 'M',
-  attack: '!', research: 'R', fortify: 'F',
+  attack: '!', research: 'R', fortify: 'F', trade: '$',
   propose_peace: 'P', propose_alliance: 'A', break_treaty: 'X',
 };
 
@@ -36,6 +36,7 @@ export const TurnLog = memo(function TurnLog({ log, agents }: Props) {
         const color = agentColorMap.get(entry.agentId) || '#888';
         const isAttack = entry.action.type === 'attack';
         const isDiplomacy = ['propose_peace', 'propose_alliance', 'break_treaty'].includes(entry.action.type);
+        const isTrade = entry.action.type === 'trade';
 
         return (
           <div key={`${entry.turn}-${entry.agentId}-${i}`} style={{
@@ -53,8 +54,9 @@ export const TurnLog = memo(function TurnLog({ log, agents }: Props) {
               textAlign: 'center', borderRadius: 3, fontSize: 8, fontWeight: 700,
               background: isAttack ? 'rgba(239,68,68,0.2)'
                 : isDiplomacy ? 'rgba(167,139,250,0.2)'
+                : isTrade ? 'rgba(251,191,36,0.2)'
                 : 'rgba(255,255,255,0.05)',
-              color: isAttack ? '#ef4444' : isDiplomacy ? '#a78bfa' : '#666',
+              color: isAttack ? '#ef4444' : isDiplomacy ? '#a78bfa' : isTrade ? '#fbbf24' : '#666',
             }}>
               {ACTION_ICONS[entry.action.type] || '?'}
             </span>

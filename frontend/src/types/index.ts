@@ -1,6 +1,6 @@
 export type TerrainType = 'plains' | 'forest' | 'mountains' | 'water' | 'desert' | 'tundra' | 'jungle' | 'swamp';
 export type BuildingType = 'farm' | 'mine' | 'lumberMill' | 'market' | 'barracks' | 'wall' | 'library' | 'tower' | 'embassy';
-export type ActionType = 'gather' | 'build' | 'train' | 'clone' | 'move' | 'attack' | 'research' | 'fortify' | 'propose_peace' | 'propose_alliance' | 'break_treaty';
+export type ActionType = 'gather' | 'build' | 'train' | 'clone' | 'move' | 'attack' | 'research' | 'fortify' | 'propose_peace' | 'propose_alliance' | 'break_treaty' | 'trade';
 
 export interface Building {
   type: BuildingType;
@@ -131,6 +131,10 @@ export interface Action {
   attribute?: string;
   unitCount?: number;
   targetAgentId?: string;
+  giveResource?: string;
+  giveAmount?: number;
+  wantResource?: string;
+  wantAmount?: number;
 }
 
 export interface TurnLogEntry {

@@ -14,6 +14,10 @@ const TILE_H = 16;       // tile height (half of width for isometric)
 const TILE_DEPTH = 10;   // block side height
 const WATER_ANIM_SPEED = 0.002;
 
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 3.0;
+const ZOOM_STEP = 0.1;
+
 // ── Terrain height levels ──
 const TERRAIN_HEIGHT: Record<string, number> = {
   water: 0, swamp: 1, plains: 2, desert: 2, forest: 2,
@@ -82,30 +86,68 @@ function toScreen(x: number, y: number, h: number, offsetX: number, offsetY: num
 
 export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredCell, setHoveredCell] = useState<MapCell | null>(null);
   const animFrameRef = useRef(0);
   const timeRef = useRef(0);
+
+  // Pan & zoom state (use refs for smooth animation, state for re-render triggers)
+  const panRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const [zoom, setZoom] = useState(1);
+  const dragRef = useRef({ dragging: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
 
   const agentColorMap = new Map(agents.map(a => [a.id, a.color]));
   const agentNameMap = new Map(agents.map(a => [a.id, a.name]));
   const rows = map.length;
   const cols = map[0]?.length || 0;
 
-  // Canvas dimensions
-  const canvasW = (cols + rows) * (TILE_W / 2) + 40;
-  const canvasH = (cols + rows) * (TILE_H / 2) + 12 * TILE_DEPTH + 60;
-  const offsetX = rows * (TILE_W / 2) + 10;
-  const offsetY = 40;
+  // Logical map dimensions (unscaled)
+  const mapW = (cols + rows) * (TILE_W / 2) + 40;
+  const mapH = (cols + rows) * (TILE_H / 2) + 12 * TILE_DEPTH + 60;
+  const isoOffsetX = rows * (TILE_W / 2) + 10;
+  const isoOffsetY = 40;
+
+  // Observe container size
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ w: Math.floor(width), h: Math.floor(height) });
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+
+  // Center the map on first render or when container/map changes
+  useEffect(() => {
+    const cx = containerSize.w / 2 - (mapW * zoomRef.current) / 2;
+    const cy = containerSize.h / 2 - (mapH * zoomRef.current) / 2;
+    panRef.current = { x: cx, y: cy };
+  }, [containerSize.w, containerSize.h, mapW, mapH]);
 
   const drawFrame = useCallback((ctx: CanvasRenderingContext2D, time: number) => {
-    ctx.clearRect(0, 0, canvasW, canvasH);
+    const cw = containerSize.w;
+    const ch = containerSize.h;
+    ctx.clearRect(0, 0, cw, ch);
 
     // Background gradient
-    const bgGrad = ctx.createLinearGradient(0, 0, 0, canvasH);
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, ch);
     bgGrad.addColorStop(0, '#0c1a2e');
     bgGrad.addColorStop(1, '#0a0e1a');
     ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Apply pan + zoom
+    const z = zoomRef.current;
+    const px = panRef.current.x;
+    const py = panRef.current.y;
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.scale(z, z);
 
     // Draw tiles back-to-front (isometric sort)
     for (let y = 0; y < rows; y++) {
@@ -119,7 +161,7 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
           h = 0.3 + Math.sin(time * WATER_ANIM_SPEED + x * 0.5 + y * 0.3) * 0.3;
         }
 
-        const [sx, sy] = toScreen(x, y, h, offsetX, offsetY);
+        const [sx, sy] = toScreen(x, y, h, isoOffsetX, isoOffsetY);
 
         // ── Draw isometric block ──
         let topColor = TERRAIN_TOP[cell.terrain] || [100, 100, 100];
@@ -282,7 +324,15 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
         }
       }
     }
-  }, [map, agents, rows, cols, canvasW, canvasH, offsetX, offsetY, agentColorMap]);
+
+    ctx.restore();
+
+    // Draw zoom indicator (outside transform)
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText(`${Math.round(zoomRef.current * 100)}%`, containerSize.w - 8, containerSize.h - 8);
+  }, [map, agents, rows, cols, mapW, mapH, isoOffsetX, isoOffsetY, containerSize, agentColorMap]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -290,8 +340,8 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = canvasW;
-    canvas.height = canvasH;
+    canvas.width = containerSize.w;
+    canvas.height = containerSize.h;
 
     let running = true;
     const animate = (t: number) => {
@@ -306,24 +356,59 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
       running = false;
       cancelAnimationFrame(animFrameRef.current);
     };
-  }, [drawFrame, canvasW, canvasH]);
+  }, [drawFrame, containerSize]);
 
-  // Hit testing for hover
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Convert screen coords to grid coords, accounting for pan+zoom
+  const screenToGrid = useCallback((clientX: number, clientY: number): [number, number] => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return [-1, -1];
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const mx = (e.clientX - rect.left) * scaleX;
-    const my = (e.clientY - rect.top) * scaleY;
-
-    // Reverse isometric transform (approximate)
-    const rx = mx - offsetX;
-    const ry = my - offsetY;
+    // Canvas pixel coords
+    const cx = (clientX - rect.left) * scaleX;
+    const cy = (clientY - rect.top) * scaleY;
+    // Undo pan+zoom to get map-space coords
+    const mx = (cx - panRef.current.x) / zoomRef.current;
+    const my = (cy - panRef.current.y) / zoomRef.current;
+    // Reverse isometric transform
+    const rx = mx - isoOffsetX;
+    const ry = my - isoOffsetY;
     const gx = Math.floor((rx / (TILE_W / 2) + ry / (TILE_H / 2)) / 2);
     const gy = Math.floor((ry / (TILE_H / 2) - rx / (TILE_W / 2)) / 2);
+    return [gx, gy];
+  }, [isoOffsetX, isoOffsetY]);
 
+  // Mouse handlers for pan
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Middle button or left button for drag
+    if (e.button === 0 || e.button === 1) {
+      dragRef.current = {
+        dragging: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        startPanX: panRef.current.x,
+        startPanY: panRef.current.y,
+      };
+      setIsDragging(true);
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragRef.current.dragging) {
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      panRef.current.x = dragRef.current.startPanX + dx;
+      panRef.current.y = dragRef.current.startPanY + dy;
+      // If moved more than 4px, it's a real drag (not a click)
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        setHoveredCell(null);
+        return;
+      }
+    }
+
+    // Hover hit test
+    const [gx, gy] = screenToGrid(e.clientX, e.clientY);
     if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
       setHoveredCell(map[gy][gx]);
     } else {
@@ -331,44 +416,88 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
     }
   };
 
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const wasDragging = dragRef.current.dragging;
+    const dx = Math.abs(e.clientX - dragRef.current.startX);
+    const dy = Math.abs(e.clientY - dragRef.current.startY);
+    dragRef.current.dragging = false;
+    setIsDragging(false);
+
+    // If it was a small movement, treat as click
+    if (wasDragging && dx < 4 && dy < 4) {
+      const [gx, gy] = screenToGrid(e.clientX, e.clientY);
+      if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
+        onCellClick?.(map[gy][gx]);
+      }
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const mx = (e.clientX - rect.left) * scaleX;
-    const my = (e.clientY - rect.top) * scaleY;
+    // Cursor position in canvas pixels
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
 
-    const rx = mx - offsetX;
-    const ry = my - offsetY;
-    const gx = Math.floor((rx / (TILE_W / 2) + ry / (TILE_H / 2)) / 2);
-    const gy = Math.floor((ry / (TILE_H / 2) - rx / (TILE_W / 2)) / 2);
+    const oldZoom = zoomRef.current;
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldZoom + delta));
 
-    if (gx >= 0 && gx < cols && gy >= 0 && gy < rows) {
-      onCellClick?.(map[gy][gx]);
-    }
+    // Zoom toward cursor: adjust pan so the point under cursor stays fixed
+    panRef.current.x = cx - (cx - panRef.current.x) * (newZoom / oldZoom);
+    panRef.current.y = cy - (cy - panRef.current.y) * (newZoom / oldZoom);
+    zoomRef.current = newZoom;
+    setZoom(newZoom);
+  };
+
+  // Double-click to reset view
+  const handleDoubleClick = () => {
+    zoomRef.current = 1;
+    setZoom(1);
+    panRef.current = {
+      x: containerSize.w / 2 - mapW / 2,
+      y: containerSize.h / 2 - mapH / 2,
+    };
   };
 
   const ownerName = hoveredCell?.owner ? agentNameMap.get(hoveredCell.owner) || hoveredCell.owner : null;
   const ownerColor = hoveredCell?.owner ? agentColorMap.get(hoveredCell.owner) : null;
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        borderRadius: 12,
+      }}
+    >
       <canvas
         ref={canvasRef}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoveredCell(null)}
-        onClick={handleClick}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => {
+          setHoveredCell(null);
+          dragRef.current.dragging = false;
+          setIsDragging(false);
+        }}
+        onWheel={handleWheel}
+        onDoubleClick={handleDoubleClick}
         style={{
-          borderRadius: 12,
-          cursor: 'pointer',
           width: '100%',
-          maxWidth: canvasW,
+          height: '100%',
+          cursor: isDragging ? 'grabbing' : 'grab',
           imageRendering: 'pixelated',
         }}
       />
-      {hoveredCell && (
+      {hoveredCell && !isDragging && (
         <div style={{
           position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
           background: 'rgba(10,10,26,0.95)', padding: '8px 18px', borderRadius: 10,
@@ -376,6 +505,7 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
           border: ownerColor ? `1px solid ${ownerColor}55` : '1px solid #333',
           backdropFilter: 'blur(8px)',
           boxShadow: ownerColor ? `0 0 12px ${ownerColor}22` : 'none',
+          pointerEvents: 'none',
         }}>
           <b>({hoveredCell.x},{hoveredCell.y})</b> {hoveredCell.terrain}
           {' '} | Richness: <span style={{ color: hoveredCell.richness > 50 ? '#4ade80' : '#ef4444' }}>{Math.round(hoveredCell.richness)}%</span>
@@ -387,9 +517,60 @@ export function GameMap({ map, agents, diplomacy, onCellClick }: Props) {
           <span style={{ color: '#555', marginLeft: 6, fontSize: 9 }}>click to inspect</span>
         </div>
       )}
+      {/* Zoom controls */}
+      <div style={{
+        position: 'absolute', bottom: 8, right: 8,
+        display: 'flex', gap: 4, alignItems: 'center',
+        pointerEvents: 'auto',
+      }}>
+        <button
+          onClick={() => {
+            const nz = Math.max(MIN_ZOOM, zoomRef.current - ZOOM_STEP * 2);
+            const cx = containerSize.w / 2;
+            const cy = containerSize.h / 2;
+            panRef.current.x = cx - (cx - panRef.current.x) * (nz / zoomRef.current);
+            panRef.current.y = cy - (cy - panRef.current.y) * (nz / zoomRef.current);
+            zoomRef.current = nz;
+            setZoom(nz);
+          }}
+          style={zoomBtnStyle}
+          title="Zoom out"
+        >-</button>
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', minWidth: 32, textAlign: 'center' }}>
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          onClick={() => {
+            const nz = Math.min(MAX_ZOOM, zoomRef.current + ZOOM_STEP * 2);
+            const cx = containerSize.w / 2;
+            const cy = containerSize.h / 2;
+            panRef.current.x = cx - (cx - panRef.current.x) * (nz / zoomRef.current);
+            panRef.current.y = cy - (cy - panRef.current.y) * (nz / zoomRef.current);
+            zoomRef.current = nz;
+            setZoom(nz);
+          }}
+          style={zoomBtnStyle}
+          title="Zoom in"
+        >+</button>
+      </div>
     </div>
   );
 }
+
+const zoomBtnStyle: React.CSSProperties = {
+  width: 24, height: 24,
+  background: 'rgba(255,255,255,0.08)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: 4,
+  color: 'rgba(255,255,255,0.5)',
+  cursor: 'pointer',
+  fontSize: 14,
+  fontWeight: 700,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 0,
+};
 
 // ── Drawing helpers ──
 

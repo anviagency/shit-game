@@ -1,9 +1,9 @@
-import { GameState, Agent, Action, TurnDecision } from '../models/GameState.js';
+import { GameState, Agent, Action, TurnDecision, BuildingType } from '../models/GameState.js';
 import { LLMProvider } from './LLMProvider.js';
 import { AgentPromptBuilder } from './AgentPromptBuilder.js';
 import { ActionValidator } from './ActionValidator.js';
 import { logger } from '../utils/logger.js';
-import { MAX_CLONES } from '../utils/constants.js';
+import { BUILDING_COSTS, TRAIN_COST, RESEARCH_COST } from '../utils/constants.js';
 
 function getDiplomacyKey(a: string, b: string): string {
   return [a, b].sort().join('-');
@@ -12,6 +12,16 @@ function getDiplomacyKey(a: string, b: string): string {
 export interface ActionResult {
   actions: Action[];
   reasoning: string;
+}
+
+interface CellRef {
+  x: number;
+  y: number;
+  terrain: string;
+  owner: string | null;
+  units: number;
+  richness: number;
+  building: { type: string } | null;
 }
 
 export class AgentManager {
@@ -96,53 +106,55 @@ export class AgentManager {
     if (log.length > 50) log.shift();
   }
 
-  /** Smart rule-based AI with emergent behavior based on attributes */
+  /** Smart rule-based AI with emergent behavior based on attributes.
+   *  All actions are pre-validated against game rules before being added. */
   private getMockActions(state: GameState, agent: Agent): ActionResult {
     const actions: Action[] = [];
     const thoughts: string[] = [];
-    const ownedCells = state.map.flat().filter(c => c.owner === agent.id);
-    const cellsWithUnits = ownedCells.filter(c => c.units > 0);
 
     const h = state.map.length;
     const w = state.map[0]?.length || 0;
+
+    // Build ownership data
+    const ownedCells: CellRef[] = [];
+    const cellsWithUnits: CellRef[] = [];
+    for (const row of state.map) {
+      for (const cell of row) {
+        if (cell.owner === agent.id) {
+          ownedCells.push(cell);
+          if (cell.units > 0) cellsWithUnits.push(cell);
+        }
+      }
+    }
+
     const ownedSet = new Set(ownedCells.map(c => `${c.x},${c.y}`));
 
-    // Scan borders from ALL owned cells (not just those with units)
-    // Then find the best source cell with units nearby
-    const borderSet = new Map<string, { cell: typeof state.map[0][0]; borderCell: typeof state.map[0][0] }>();
-    for (const cell of ownedCells) {
+    // Build legal adjacent targets: only cells that are DIRECTLY adjacent (distance=1) to a cell with units
+    // This guarantees move/attack actions will pass the adjacency check
+    const neutralAdj: { cell: CellRef; from: CellRef }[] = [];
+    const enemyAdj: { cell: CellRef; from: CellRef }[] = [];
+
+    for (const src of cellsWithUnits) {
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-        const nx = cell.x + dx, ny = cell.y + dy;
-        const key = `${nx},${ny}`;
-        if (nx >= 0 && nx < w && ny >= 0 && ny < h && !ownedSet.has(key)) {
-          const target = state.map[ny][nx];
-          if (target.terrain !== 'water') {
-            borderSet.set(key, { cell: target, borderCell: cell });
+        const nx = src.x + dx, ny = src.y + dy;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const target = state.map[ny][nx];
+        if (target.terrain === 'water') continue;
+        if (ownedSet.has(`${nx},${ny}`)) continue; // Already owned
+
+        const entry = { cell: target, from: src };
+        if (!target.owner) {
+          // Avoid duplicate neutral targets
+          if (!neutralAdj.some(a => a.cell.x === nx && a.cell.y === ny)) {
+            neutralAdj.push(entry);
+          }
+        } else if (target.owner !== agent.id) {
+          if (!enemyAdj.some(a => a.cell.x === nx && a.cell.y === ny)) {
+            enemyAdj.push(entry);
           }
         }
       }
     }
-
-    // For each border target, find the nearest owned cell with units
-    const adjacentCells: { cell: typeof state.map[0][0]; from: typeof state.map[0][0] }[] = [];
-    for (const { cell: target, borderCell } of borderSet.values()) {
-      // If the border cell itself has units, use it directly
-      if (borderCell.units > 0) {
-        adjacentCells.push({ cell: target, from: borderCell });
-      } else {
-        // Find any adjacent owned cell with units
-        const source = cellsWithUnits.find(c => {
-          const dist = Math.abs(c.x - target.x) + Math.abs(c.y - target.y);
-          return dist <= 1 + Math.floor(agent.attributes.agility / 10);
-        });
-        if (source) {
-          adjacentCells.push({ cell: target, from: source });
-        }
-      }
-    }
-
-    const neutralAdj = adjacentCells.filter(a => !a.cell.owner);
-    const enemyAdj = adjacentCells.filter(a => a.cell.owner && a.cell.owner !== agent.id);
 
     // Emergent personality from attributes
     const isAggressive = agent.attributes.strength > 12;
@@ -162,96 +174,108 @@ export class AgentManager {
     if (isDefensive) thoughts.push('Engineering focus — prioritizing fortifications');
     if (isScholar) thoughts.push('Wisdom-oriented — pursuing knowledge');
 
-    // PRIORITY 1: EXPAND into neutral territory (always try first!)
+    // Track used source cells to avoid double-spending units
+    const usedUnits = new Map<string, number>(); // "x,y" → units already committed
+    const availableUnits = (cell: CellRef): number => {
+      const key = `${cell.x},${cell.y}`;
+      return cell.units - (usedUnits.get(key) || 0);
+    };
+    const commitUnits = (cell: CellRef, count: number): void => {
+      const key = `${cell.x},${cell.y}`;
+      usedUnits.set(key, (usedUnits.get(key) || 0) + count);
+    };
+
+    // PRIORITY 1: EXPAND into neutral territory
     if (neutralAdj.length > 0) {
-      // Try to expand into up to 2 neutral cells per turn
-      const expandTargets = neutralAdj.filter(a => a.from.units >= 1);
-      for (const target of expandTargets) {
-        if (actions.length >= 2) break; // Leave 1 slot for other actions
-        const moveCount = Math.max(1, Math.min(Math.floor(target.from.units / 2), 2));
-        if (target.from.units >= moveCount) {
-          thoughts.push(`Expanding to (${target.cell.x},${target.cell.y}) ${target.cell.terrain}`);
-          actions.push({
-            type: 'move', agentId: agent.id,
-            sourceX: target.from.x, sourceY: target.from.y,
-            targetX: target.cell.x, targetY: target.cell.y,
-            unitCount: moveCount,
-          });
-          target.from.units -= moveCount; // Track units used this turn
-        }
+      // Sort by richness descending — expand to richest cells first
+      const sorted = [...neutralAdj].sort((a, b) => b.cell.richness - a.cell.richness);
+      for (const target of sorted) {
+        if (actions.length >= 2) break;
+        const avail = availableUnits(target.from);
+        if (avail < 1) continue;
+        const moveCount = Math.max(1, Math.min(Math.floor(avail / 2), 2));
+        thoughts.push(`Expanding to (${target.cell.x},${target.cell.y}) ${target.cell.terrain}`);
+        actions.push({
+          type: 'move', agentId: agent.id,
+          sourceX: target.from.x, sourceY: target.from.y,
+          targetX: target.cell.x, targetY: target.cell.y,
+          unitCount: moveCount,
+        });
+        commitUnits(target.from, moveCount);
       }
     }
 
     // PRIORITY 2: ATTACK enemies (aggressive agents or when no neutral land left)
     if (actions.length < 3 && enemyAdj.length > 0) {
       if (isAggressive || neutralAdj.length === 0) {
-        const target = enemyAdj.find(a => a.from.units >= 3);
+        // Find a target where we have enough available units
+        const target = enemyAdj.find(a => availableUnits(a.from) >= 3);
         if (target) {
           const key = getDiplomacyKey(agent.id, target.cell.owner!);
           const rel = state.diplomacy[key];
           const atPeace = rel && (rel.type === 'peace' || rel.type === 'alliance');
           if (!atPeace) {
-            thoughts.push(`Attacking ${target.cell.owner} at (${target.cell.x},${target.cell.y})`);
+            const atkUnits = availableUnits(target.from);
+            thoughts.push(`Attacking ${target.cell.owner} at (${target.cell.x},${target.cell.y}) with ${atkUnits} units`);
             actions.push({
               type: 'attack', agentId: agent.id,
               sourceX: target.from.x, sourceY: target.from.y,
               targetX: target.cell.x, targetY: target.cell.y,
-              unitCount: target.from.units,
+              unitCount: atkUnits,
             });
+            commitUnits(target.from, atkUnits);
           }
         }
       }
     }
 
-    // PRIORITY 3: BUILD on owned cells
+    // PRIORITY 3: BUILD on owned cells — with full resource + terrain validation
     if (actions.length < 3) {
-      const buildable = ownedCells.filter(c => !c.building && c.terrain !== 'water');
-      if (buildable.length > 0 && agent.resources.gold >= 30) {
-        // Pick best cell for building
-        let buildingType: string | null = null;
-        let targetCell = buildable[0];
-
-        if (lowFood) {
-          const plains = buildable.find(c => c.terrain === 'plains');
-          if (plains) { targetCell = plains; buildingType = 'farm'; }
-        }
-        if (!buildingType && isDefensive && !ownedCells.some(c => c.building?.type === 'wall')) {
-          buildingType = 'wall';
-        }
-        if (!buildingType && isScholar && !ownedCells.some(c => c.building?.type === 'library') && agent.resources.gold >= 70) {
-          buildingType = 'library';
-        }
-        if (!buildingType) {
-          const forest = buildable.find(c => c.terrain === 'forest' || c.terrain === 'jungle');
-          const mountain = buildable.find(c => c.terrain === 'mountains');
-          const plains = buildable.find(c => c.terrain === 'plains');
-          if (forest) { targetCell = forest; buildingType = 'lumberMill'; }
-          else if (mountain) { targetCell = mountain; buildingType = 'mine'; }
-          else if (plains) { targetCell = plains; buildingType = 'farm'; }
-        }
-
-        if (buildingType) {
-          thoughts.push(`Building ${buildingType} at (${targetCell.x},${targetCell.y})`);
-          actions.push({
-            type: 'build', agentId: agent.id,
-            targetX: targetCell.x, targetY: targetCell.y,
-            buildingType: buildingType as any,
-          });
-        }
+      const buildAction = this.pickLegalBuild(agent, ownedCells, lowFood, isDefensive, isScholar);
+      if (buildAction) {
+        thoughts.push(`Building ${buildAction.buildingType} at (${buildAction.targetX},${buildAction.targetY})`);
+        actions.push(buildAction);
       }
     }
 
-    // PRIORITY 4: TRAIN units (can always train at least 1 even without barracks)
-    if (actions.length < 3 && agent.resources.gold >= 15 && agent.resources.food >= 10) {
+    // PRIORITY 4: TRAIN units (validate affordability)
+    if (actions.length < 3 &&
+        agent.resources.gold >= TRAIN_COST.gold &&
+        agent.resources.food >= TRAIN_COST.food) {
       thoughts.push('Training new units');
       actions.push({ type: 'train', agentId: agent.id });
     }
 
-    // PRIORITY 5: DIPLOMACY — coalition logic
+    // PRIORITY 5: RESEARCH (if can afford)
+    if (actions.length < 3 &&
+        agent.resources.knowledge >= RESEARCH_COST.knowledge &&
+        agent.resources.gold >= RESEARCH_COST.gold) {
+      // Pick attribute based on personality
+      let attr: 'strength' | 'wisdom' | 'engineering' | 'charisma' | 'agility' = 'strength';
+      if (isScholar) attr = 'wisdom';
+      else if (isDefensive) attr = 'engineering';
+      else if (isDiplomatic) attr = 'charisma';
+      else if (agent.attributes.agility < 10) attr = 'agility';
+      thoughts.push(`Researching ${attr}`);
+      actions.push({ type: 'research', agentId: agent.id, attribute: attr });
+    }
+
+    // PRIORITY 6: DIPLOMACY — coalition logic
     const aliveRivals = state.agents.filter(a => a.id !== agent.id && a.isAlive);
+
+    // Pre-compute rival scores without using map.flat()
+    const rivalTerritories = new Map<string, number>();
+    for (const row of state.map) {
+      for (const cell of row) {
+        if (cell.owner && cell.owner !== agent.id) {
+          rivalTerritories.set(cell.owner, (rivalTerritories.get(cell.owner) || 0) + 1);
+        }
+      }
+    }
+
     const rivalScores = aliveRivals.map(a => ({
       agent: a,
-      score: state.map.flat().filter(c => c.owner === a.id).length * 2 + a.totalUnits,
+      score: (rivalTerritories.get(a.id) || 0) * 2 + a.totalUnits,
     })).sort((a, b) => b.score - a.score);
 
     const myScore = ownedCells.length * 2 + agent.totalUnits;
@@ -283,6 +307,15 @@ export class AgentManager {
           type: 'propose_peace', agentId: agent.id,
           targetAgentId: nearbyEnemyId,
         });
+      }
+    }
+
+    // PRIORITY 7: TRADE — exchange surplus resources for what we need
+    if (actions.length < 3 && aliveRivals.length > 0) {
+      const tradeAction = this.pickTrade(agent, aliveRivals, state);
+      if (tradeAction) {
+        thoughts.push(`Trading with ${tradeAction.targetAgentId}`);
+        actions.push(tradeAction);
       }
     }
 
@@ -319,5 +352,158 @@ export class AgentManager {
     }
 
     return { actions: actions.slice(0, 3), reasoning: thoughts.join('. ') };
+  }
+
+  /** Pick a legal build action with full resource + terrain validation */
+  private pickLegalBuild(
+    agent: Agent,
+    ownedCells: CellRef[],
+    lowFood: boolean,
+    isDefensive: boolean,
+    isScholar: boolean,
+  ): Action | null {
+    const buildable = ownedCells.filter(c => !c.building && c.terrain !== 'water');
+    if (buildable.length === 0) return null;
+
+    // Helper: can we afford this building type?
+    const canAfford = (type: string): boolean => {
+      const cost = BUILDING_COSTS[type];
+      if (!cost) return false;
+      return agent.resources.gold >= cost.gold &&
+             agent.resources.wood >= cost.wood &&
+             agent.resources.iron >= cost.iron;
+    };
+
+    // Helper: is terrain valid for this building?
+    const terrainValid = (cell: CellRef, type: string): boolean => {
+      if (type === 'mine') return cell.terrain === 'mountains';
+      if (type === 'lumberMill') return cell.terrain === 'forest' || cell.terrain === 'jungle';
+      return true; // Other buildings work on any non-water terrain
+    };
+
+    // Try building types in priority order based on personality/needs
+    const candidates: { type: string; cell: CellRef }[] = [];
+
+    // Priority: farm if low food
+    if (lowFood) {
+      const plains = buildable.find(c => c.terrain === 'plains');
+      if (plains && canAfford('farm')) candidates.push({ type: 'farm', cell: plains });
+    }
+
+    // Defensive: wall
+    if (isDefensive && !ownedCells.some(c => c.building?.type === 'wall')) {
+      const wallCell = buildable[0];
+      if (wallCell && canAfford('wall')) candidates.push({ type: 'wall', cell: wallCell });
+    }
+
+    // Scholar: library
+    if (isScholar && !ownedCells.some(c => c.building?.type === 'library')) {
+      const libCell = buildable[0];
+      if (libCell && canAfford('library')) candidates.push({ type: 'library', cell: libCell });
+    }
+
+    // Terrain-specific buildings
+    for (const cell of buildable) {
+      if (cell.terrain === 'forest' || cell.terrain === 'jungle') {
+        if (canAfford('lumberMill')) {
+          candidates.push({ type: 'lumberMill', cell });
+          break;
+        }
+      }
+    }
+    for (const cell of buildable) {
+      if (cell.terrain === 'mountains') {
+        if (canAfford('mine')) {
+          candidates.push({ type: 'mine', cell });
+          break;
+        }
+      }
+    }
+    for (const cell of buildable) {
+      if (cell.terrain === 'plains') {
+        if (canAfford('farm')) {
+          candidates.push({ type: 'farm', cell });
+          break;
+        }
+      }
+    }
+
+    // Barracks if no barracks yet and can afford
+    if (!ownedCells.some(c => c.building?.type === 'barracks') && canAfford('barracks')) {
+      const barCell = buildable[0];
+      if (barCell) candidates.push({ type: 'barracks', cell: barCell });
+    }
+
+    // Pick first valid candidate
+    for (const { type, cell } of candidates) {
+      if (canAfford(type) && terrainValid(cell, type)) {
+        return {
+          type: 'build',
+          agentId: agent.id,
+          targetX: cell.x,
+          targetY: cell.y,
+          buildingType: type as BuildingType,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /** Pick a trade action: offer surplus resource for scarce one */
+  private pickTrade(agent: Agent, rivals: Agent[], state: GameState): Action | null {
+    const res = agent.resources;
+    type ResKey = 'gold' | 'food' | 'wood' | 'iron' | 'knowledge';
+
+    // Find what we have in surplus (>100) and what we're short on (<30)
+    const surplus: { res: ResKey; amount: number }[] = [];
+    const needs: { res: ResKey; amount: number }[] = [];
+
+    const checks: [ResKey, number, number][] = [
+      ['gold', 100, 30],
+      ['food', 80, 20],
+      ['wood', 60, 15],
+      ['iron', 40, 10],
+    ];
+
+    for (const [r, surplusThresh, needThresh] of checks) {
+      if (res[r] > surplusThresh) surplus.push({ res: r, amount: res[r] - surplusThresh });
+      if (res[r] < needThresh) needs.push({ res: r, amount: needThresh - res[r] });
+    }
+
+    if (surplus.length === 0 || needs.length === 0) return null;
+
+    // Find a trade partner — prefer allies/peace partners
+    const getDiplomacyKey = (a: string, b: string) => [a, b].sort().join('-');
+    const sortedPartners = [...rivals].sort((a, b) => {
+      const ka = getDiplomacyKey(agent.id, a.id);
+      const kb = getDiplomacyKey(agent.id, b.id);
+      const relA = state.diplomacy[ka]?.type || 'neutral';
+      const relB = state.diplomacy[kb]?.type || 'neutral';
+      const score = (r: string) => r === 'alliance' ? 2 : r === 'peace' ? 1 : 0;
+      return score(relB) - score(relA);
+    });
+
+    const give = surplus[0];
+    const want = needs[0];
+    const giveAmount = Math.min(give.amount, 40); // Cap per trade
+    const wantAmount = Math.min(want.amount, 30);
+
+    // Find partner who has what we need
+    for (const partner of sortedPartners) {
+      if (partner.resources[want.res] >= wantAmount) {
+        return {
+          type: 'trade',
+          agentId: agent.id,
+          targetAgentId: partner.id,
+          giveResource: give.res,
+          giveAmount,
+          wantResource: want.res,
+          wantAmount,
+        };
+      }
+    }
+
+    return null;
   }
 }

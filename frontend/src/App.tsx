@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { MapCell } from './types';
 import { GameMap } from './components/GameMap';
 import { AgentPanel } from './components/AgentPanel';
@@ -19,12 +19,37 @@ export default function App() {
   const [detailAgent, setDetailAgent] = useState<string | null>(null);
   const [inspectedCell, setInspectedCell] = useState<MapCell | null>(null);
 
+  // Pre-compute territory counts to avoid repeated map.flat().filter()
+  const territoryCounts = useMemo(() => {
+    if (!gameState) return new Map<string, number>();
+    const counts = new Map<string, number>();
+    for (const row of gameState.map) {
+      for (const cell of row) {
+        if (cell.owner) {
+          counts.set(cell.owner, (counts.get(cell.owner) || 0) + 1);
+        }
+      }
+    }
+    return counts;
+  }, [gameState]);
+
+  const sortedAgents = useMemo(() => {
+    if (!gameState) return [];
+    return gameState.agents.slice().sort((a, b) => {
+      if (a.isAlive !== b.isAlive) return a.isAlive ? -1 : 1;
+      return (territoryCounts.get(b.id) || 0) - (territoryCounts.get(a.id) || 0);
+    });
+  }, [gameState, territoryCounts]);
+
   return (
     <div style={{
-      minHeight: '100vh',
+      height: '100vh',
       background: 'linear-gradient(180deg, #080818 0%, #0a0a1a 50%, #0c0c20 100%)',
       color: '#e0e0e0',
-      padding: 14,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      padding: 8,
     }}>
       {/* Header */}
       <GameControls
@@ -36,14 +61,33 @@ export default function App() {
         onSetSpeed={setSpeed}
       />
 
+      {/* Main 3-column layout */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 260px',
-        gap: 14,
-        marginTop: 14,
+        gridTemplateColumns: '240px 1fr 240px',
+        gap: 8,
+        marginTop: 8,
+        flex: 1,
+        minHeight: 0,
       }}>
-        {/* Left: Map + Stats + Log */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Left sidebar: Stats + Log */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          overflowY: 'auto',
+          minHeight: 0,
+        }}>
+          {gameState && territoryHistory.length > 1 && (
+            <StatsChart data={territoryHistory} agents={gameState.agents} />
+          )}
+          {gameState && (
+            <TurnLog log={gameState.turnLog} agents={gameState.agents} />
+          )}
+        </div>
+
+        {/* Center: Map */}
+        <div style={{ minHeight: 0, minWidth: 0 }}>
           {gameState ? (
             <GameMap
               map={gameState.map}
@@ -53,7 +97,7 @@ export default function App() {
             />
           ) : (
             <div style={{
-              width: '100%', height: 500,
+              width: '100%', height: '100%',
               background: 'radial-gradient(ellipse at center, rgba(30,30,60,0.5) 0%, rgba(10,10,26,0.9) 70%)',
               borderRadius: 12,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -82,43 +126,24 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {/* Stats + Log side by side */}
-          {gameState && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              {territoryHistory.length > 1 && (
-                <StatsChart data={territoryHistory} agents={gameState.agents} />
-              )}
-              <TurnLog log={gameState.turnLog} agents={gameState.agents} />
-            </div>
-          )}
         </div>
 
-        {/* Right: Agent Panels */}
+        {/* Right sidebar: Agent Panels */}
         <div style={{
           display: 'flex', flexDirection: 'column', gap: 6,
-          overflowY: 'auto', maxHeight: 'calc(100vh - 90px)',
+          overflowY: 'auto', minHeight: 0,
           paddingRight: 4,
         }}>
-          {gameState?.agents
-            .slice()
-            .sort((a, b) => {
-              // Sort: alive first, then by territory desc
-              if (a.isAlive !== b.isAlive) return a.isAlive ? -1 : 1;
-              const aT = gameState.map.flat().filter(c => c.owner === a.id).length;
-              const bT = gameState.map.flat().filter(c => c.owner === b.id).length;
-              return bT - aT;
-            })
-            .map(agent => (
-              <AgentPanel
-                key={agent.id}
-                agent={agent}
-                territory={gameState.map.flat().filter(c => c.owner === agent.id).length}
-                isSelected={selectedAgent === agent.id}
-                onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
-                onDetail={() => setDetailAgent(agent.id)}
-              />
-            ))}
+          {sortedAgents.map(agent => (
+            <AgentPanel
+              key={agent.id}
+              agent={agent}
+              territory={territoryCounts.get(agent.id) || 0}
+              isSelected={selectedAgent === agent.id}
+              onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
+              onDetail={() => setDetailAgent(agent.id)}
+            />
+          ))}
         </div>
       </div>
 
@@ -140,7 +165,7 @@ export default function App() {
         return (
           <AgentDetailModal
             agent={agent}
-            territory={gameState.map.flat().filter(c => c.owner === agent.id).length}
+            territory={territoryCounts.get(agent.id) || 0}
             thinking={thinkingLogs[agent.id] || []}
             diplomacy={gameState.diplomacy}
             agents={gameState.agents}

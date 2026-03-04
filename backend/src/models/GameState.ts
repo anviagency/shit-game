@@ -151,9 +151,12 @@ export interface AgentThinkingLog {
 }
 
 // ── Actions ──
+export const ResourceType = z.enum(['gold', 'food', 'wood', 'iron', 'knowledge']);
+export type ResourceType = z.infer<typeof ResourceType>;
+
 export const ActionType = z.enum([
   'gather', 'build', 'train', 'clone', 'move', 'attack', 'research', 'fortify',
-  'propose_peace', 'propose_alliance', 'break_treaty',
+  'propose_peace', 'propose_alliance', 'break_treaty', 'trade',
 ]);
 export type ActionType = z.infer<typeof ActionType>;
 
@@ -167,7 +170,12 @@ export const ActionSchema = z.object({
   buildingType: BuildingType.optional(),
   attribute: z.enum(['hp', 'strength', 'wisdom', 'agility', 'engineering', 'charisma']).optional(),
   unitCount: z.number().optional(),
-  targetAgentId: z.string().optional(),   // for diplomacy actions
+  targetAgentId: z.string().optional(),   // for diplomacy + trade actions
+  // Trade fields
+  giveResource: ResourceType.optional(),
+  giveAmount: z.number().optional(),
+  wantResource: ResourceType.optional(),
+  wantAmount: z.number().optional(),
 });
 export type Action = z.infer<typeof ActionSchema>;
 
