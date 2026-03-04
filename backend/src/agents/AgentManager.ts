@@ -1,4 +1,4 @@
-import { GameState, Agent, Action, TurnDecision, BuildingType } from '../models/GameState.js';
+import { GameState, Agent, Action, TurnDecision, BuildingType, DNAPatchProposal } from '../models/GameState.js';
 import { LLMProvider } from './LLMProvider.js';
 import { AgentPromptBuilder } from './AgentPromptBuilder.js';
 import { ActionValidator } from './ActionValidator.js';
@@ -12,6 +12,7 @@ function getDiplomacyKey(a: string, b: string): string {
 export interface ActionResult {
   actions: Action[];
   reasoning: string;
+  dnaPatch?: DNAPatchProposal;
 }
 
 interface CellRef {
@@ -66,7 +67,7 @@ export class AgentManager {
       const response = await provider.generateResponse(systemPrompt, userPrompt);
 
       let reasoning = '';
-      // Extract personality note and reasoning
+      // Extract personality note, reasoning, and DNA patch
       try {
         const raw = response.trim();
         const jsonStr = raw.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] || raw;
@@ -76,6 +77,10 @@ export class AgentManager {
         }
         if (parsed.reasoning && typeof parsed.reasoning === 'string') {
           reasoning = parsed.reasoning;
+        }
+        // Process DNA patch proposal
+        if (parsed.dna_patch && typeof parsed.dna_patch === 'object') {
+          this.applyDNAPatch(agent, parsed.dna_patch, state.turn);
         }
       } catch { /* ignore */ }
 
@@ -88,6 +93,56 @@ export class AgentManager {
       this.recordThinking(agent, state.turn, `Error: ${err.message}. Using mock AI.`, result.actions);
       return result.actions;
     }
+  }
+
+  /** Validate and apply a DNA patch proposal from an LLM agent */
+  private applyDNAPatch(agent: Agent, patch: any, turn: number): void {
+    const validFields = ['identity', 'priorities', 'doctrine', 'style'] as const;
+    if (!patch.field || !validFields.includes(patch.field)) return;
+    if (!patch.newValue || typeof patch.newValue !== 'string') return;
+    if (!patch.reason || typeof patch.reason !== 'string') return;
+
+    // Reject patches that try to break core rules
+    const forbidden = ['ignore rules', 'ignore dna', 'illegal', 'bypass', 'cheat'];
+    const lowerValue = patch.newValue.toLowerCase();
+    if (forbidden.some(f => lowerValue.includes(f))) {
+      logger.warn(`${agent.name} tried forbidden DNA patch: ${patch.newValue}`);
+      return;
+    }
+
+    const field = patch.field as typeof validFields[number];
+    const oldValue = field === 'priorities'
+      ? agent.dna.priorities.join(', ')
+      : field === 'doctrine'
+        ? agent.dna.doctrine.join('; ')
+        : agent.dna[field];
+
+    // Apply the patch
+    if (field === 'priorities') {
+      agent.dna.priorities = patch.newValue.split(',').map((s: string) => s.trim()).slice(0, 5);
+    } else if (field === 'doctrine') {
+      // Add new doctrine, keep max 5
+      agent.dna.doctrine.push(patch.newValue);
+      if (agent.dna.doctrine.length > 5) agent.dna.doctrine.shift();
+    } else {
+      agent.dna[field] = patch.newValue;
+    }
+
+    agent.dna.version++;
+
+    // Log the change
+    agent.dnaLog.push({
+      turn,
+      field,
+      oldValue: String(oldValue),
+      newValue: patch.newValue,
+      reason: patch.reason,
+    });
+
+    // Keep dnaLog reasonable
+    if (agent.dnaLog.length > 20) agent.dnaLog.shift();
+
+    logger.info(`${agent.name} DNA evolved (v${agent.dna.version}): ${field} changed — ${patch.reason}`);
   }
 
   private recordThinking(agent: Agent, turn: number, reasoning: string, actions: Action[]): void {

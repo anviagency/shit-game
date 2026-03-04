@@ -61,7 +61,7 @@ export const AgentPanel = memo(function AgentPanel({ agent, territory, isSelecte
             }}
             title="View details"
           >
-            RPG
+            Intel
           </button>
           <span style={{
             fontSize: 8, color: '#666', background: '#1a1a30', padding: '1px 5px',

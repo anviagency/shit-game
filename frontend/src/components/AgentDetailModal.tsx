@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Agent, TurnDecision, DiplomaticRelation, SKILL_DEFINITIONS, SkillCategory } from '../types';
+import { Agent, TurnDecision, DiplomaticRelation, SKILL_DEFINITIONS, SkillCategory, EmotionalState } from '../types';
 
 interface Props {
   agent: Agent;
@@ -10,7 +10,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'profile' | 'skills' | 'thinking' | 'memory' | 'diplomacy';
+type Tab = 'profile' | 'dna' | 'skills' | 'thinking' | 'memory' | 'diplomacy';
 
 function hexToRgba(hex: string, a: number): string {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -26,6 +26,7 @@ export function AgentDetailModal({ agent, territory, thinking, diplomacy, agents
   const unlockedSkills = agent.skills?.filter(s => s.level > 0).length || 0;
   const tabs: { key: Tab; label: string }[] = [
     { key: 'profile', label: 'Profile' },
+    { key: 'dna', label: 'DNA' },
     { key: 'skills', label: `Skills (${unlockedSkills})` },
     { key: 'thinking', label: 'Thinking' },
     { key: 'memory', label: 'Memory' },
@@ -122,6 +123,9 @@ export function AgentDetailModal({ agent, territory, thinking, diplomacy, agents
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
           {tab === 'profile' && (
             <ProfileTab agent={agent} territory={territory} xpPct={xpPct} xpForNext={xpForNext} />
+          )}
+          {tab === 'dna' && (
+            <DNATab agent={agent} />
           )}
           {tab === 'skills' && (
             <SkillsTab agent={agent} />
@@ -327,6 +331,221 @@ function DiplomacyTab({ agent, diplomacy, agents }: {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+const EMOTIONAL_STATE_CONFIG: Record<EmotionalState, { label: string; color: string; icon: string }> = {
+  confident: { label: 'Confident', color: '#4ade80', icon: '💪' },
+  calm: { label: 'Calm', color: '#60a5fa', icon: '😌' },
+  cautious: { label: 'Cautious', color: '#fbbf24', icon: '👀' },
+  threatened: { label: 'Threatened', color: '#f97316', icon: '😰' },
+  desperate: { label: 'Desperate', color: '#ef4444', icon: '🔥' },
+};
+
+function DNATab({ agent }: { agent: Agent }) {
+  const dna = agent.dna;
+  const fear = agent.fear;
+
+  if (!dna) {
+    return (
+      <div style={{ color: '#666', fontSize: 11, textAlign: 'center', padding: 20 }}>
+        <div style={{ fontSize: 14, marginBottom: 8 }}>No DNA data available</div>
+        <div style={{ color: '#555', fontSize: 10 }}>Restart the server to generate initial DNA for all agents.</div>
+      </div>
+    );
+  }
+
+  const emotionCfg = fear ? EMOTIONAL_STATE_CONFIG[fear.emotionalState] : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Emotional State & Fear */}
+      {fear && emotionCfg && (
+        <div style={{
+          background: `linear-gradient(135deg, ${emotionCfg.color}15, transparent)`,
+          border: `1px solid ${emotionCfg.color}30`,
+          borderRadius: 10, padding: 12,
+        }}>
+          <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+            State of Mind
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 20 }}>{emotionCfg.icon}</span>
+            <span style={{ fontSize: 16, fontWeight: 800, color: emotionCfg.color }}>
+              {emotionCfg.label}
+            </span>
+            <span style={{ fontSize: 11, color: '#888', marginLeft: 'auto' }}>
+              Fear: <span style={{
+                fontWeight: 700,
+                color: fear.fearLevel > 60 ? '#ef4444' : fear.fearLevel > 30 ? '#fbbf24' : '#4ade80',
+              }}>{Math.round(fear.fearLevel)}/100</span>
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: 10 }}>
+            <FearStat label="Death Awareness" value={fear.deathAwareness} max={100} color="#ef4444" />
+            <FearStat label="Threat Level" value={Math.min(100, fear.threatMultiplier * 25)} max={100} color="#f97316" />
+            <FearStat label="Loss Streak" value={fear.lossStreak} max={10} color="#fbbf24" />
+            <FearStat label="Starvation" value={fear.starvationTurns} max={10} color="#a16207" />
+            <FearStat label="Betrayals" value={fear.betrayalCount} max={5} color="#ec4899" />
+          </div>
+        </div>
+      )}
+
+      {/* Identity */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Identity
+          </span>
+          <span style={{ fontSize: 9, color: '#555' }}>v{dna.version}</span>
+        </div>
+        <div style={{
+          fontSize: 12, color: '#e0e0e0', fontStyle: 'italic', lineHeight: 1.5,
+          padding: '8px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 8,
+          borderLeft: `3px solid ${agent.color}`,
+        }}>
+          "{dna.identity}"
+        </div>
+      </div>
+
+      {/* Style */}
+      <div>
+        <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+          Ruling Style
+        </div>
+        <div style={{
+          fontSize: 11, color: '#bbb', padding: '6px 10px',
+          background: 'rgba(167,139,250,0.08)', borderRadius: 6,
+        }}>
+          {dna.style}
+        </div>
+      </div>
+
+      {/* Priorities */}
+      <div>
+        <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+          Priorities
+        </div>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {dna.priorities.map((p, i) => (
+            <span key={i} style={{
+              fontSize: 10, padding: '3px 8px', borderRadius: 4, fontWeight: 600,
+              background: i === 0 ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.06)',
+              color: i === 0 ? '#4ade80' : '#bbb',
+              border: i === 0 ? '1px solid rgba(74,222,128,0.3)' : '1px solid transparent',
+            }}>
+              {i + 1}. {p}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Doctrine */}
+      <div>
+        <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+          Doctrine
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {dna.doctrine.map((d, i) => (
+            <div key={i} style={{
+              fontSize: 10, color: '#bbb', padding: '4px 8px',
+              background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              borderLeft: '2px solid rgba(96,165,250,0.4)',
+            }}>
+              {d}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Non-Negotiables */}
+      {dna.nonNegotiables.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: '#ef4444', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+            Non-Negotiables
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {dna.nonNegotiables.map((n, i) => (
+              <div key={i} style={{
+                fontSize: 10, color: '#f87171', padding: '4px 8px',
+                background: 'rgba(239,68,68,0.08)', borderRadius: 4,
+                borderLeft: '2px solid rgba(239,68,68,0.5)',
+              }}>
+                {n}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Trauma */}
+      {dna.trauma.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: '#f97316', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+            Defining Moments
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {dna.trauma.map((t, i) => (
+              <div key={i} style={{
+                fontSize: 10, color: '#fbbf24', padding: '4px 8px',
+                background: 'rgba(251,191,36,0.06)', borderRadius: 4,
+                borderLeft: '2px solid rgba(251,191,36,0.4)',
+                fontStyle: 'italic',
+              }}>
+                {t}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* DNA Evolution Log */}
+      {agent.dnaLog && agent.dnaLog.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+            Evolution Log
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {[...agent.dnaLog].reverse().map((patch, i) => (
+              <div key={i} style={{
+                fontSize: 10, padding: '6px 8px',
+                background: 'rgba(255,255,255,0.03)', borderRadius: 6,
+                borderLeft: `2px solid ${agent.color}40`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <span style={{ color: agent.color, fontWeight: 700, fontSize: 9 }}>Turn {patch.turn}</span>
+                  <span style={{ color: '#666', fontSize: 9, textTransform: 'uppercase' }}>{patch.field}</span>
+                </div>
+                <div style={{ color: '#999', fontSize: 9, textDecoration: 'line-through', marginBottom: 1 }}>
+                  {patch.oldValue}
+                </div>
+                <div style={{ color: '#ccc', fontSize: 10 }}>
+                  {patch.newValue}
+                </div>
+                <div style={{ color: '#a78bfa', fontSize: 9, fontStyle: 'italic', marginTop: 2 }}>
+                  "{patch.reason}"
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FearStat({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  const pct = Math.min(100, (value / max) * 100);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ color: '#666', width: 80, fontSize: 9 }}>{label}</span>
+      <div style={{
+        flex: 1, height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden',
+      }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2 }} />
+      </div>
+      <span style={{ color: '#888', width: 18, textAlign: 'right', fontSize: 9 }}>{Math.round(value)}</span>
     </div>
   );
 }

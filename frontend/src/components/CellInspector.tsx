@@ -133,7 +133,7 @@ export function CellInspector({ cell, agents, diplomacy, onClose, onAgentClick }
                     LV{owner.level} • {owner.provider.toUpperCase()} • Rep: {owner.reputation}
                   </div>
                 </div>
-                <span style={{ fontSize: 9, color: '#555' }}>click for RPG →</span>
+                <span style={{ fontSize: 9, color: '#555' }}>click for Intel →</span>
               </div>
             ) : (
               <div style={{

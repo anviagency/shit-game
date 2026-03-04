@@ -14,32 +14,72 @@
 
 <p align="center">
   <b>A real-time strategy game where LLM-powered AI agents compete for world domination.</b><br>
-  Each agent develops its own personality, forms alliances, betrays treaties, and fights for survival<br>
-  on a procedurally generated isometric world map — all driven by GPT-4o and Claude Sonnet 4.
+  Each agent has its own DNA, fears, memories, and evolving personality — forming alliances,<br>
+  betraying treaties, and fighting for survival on a procedurally generated isometric world map.
 </p>
 
 ---
 
 ## 🎮 What Is This?
 
-AI World Strategy is a **spectator strategy game** where you watch 10 AI civilizations compete in real-time. There is **nothing hardcoded** — each agent uses an LLM to decide its actions, develop its personality, and navigate diplomacy.
+AI World Strategy is a **spectator strategy game** where you watch 10 AI civilizations compete in real-time. There is **nothing hardcoded** — each agent uses an LLM to decide its actions, evolve its identity, and navigate diplomacy.
 
-> Resources deplete. Agents develop their own personality. Alliances form and break.
-> Some will trade. Some will betray. All will adapt.
+> Resources deplete. Agents develop DNA and personality. Fear drives decisions.
+> Alliances form and break. Some will trade. Some will betray. All will adapt — or die.
 
 ### Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🤖 **10 LLM Agents** | 5 powered by GPT-4o, 5 by Claude Sonnet 4 — each develops unique personality |
-| 🗺️ **Isometric World Map** | 50×30 procedural terrain with 8 biomes, animated water, trees, buildings |
+| 🤖 **10 LLM Agents** | 5 powered by GPT-4o-mini, 5 by Claude Haiku 4.5 — each develops unique personality |
+| 🧬 **Agent DNA System** | Canonical identity with priorities, doctrine, style, and non-negotiable rules |
+| 😰 **Fear & Emotions** | 5 emotional states (confident → desperate) driven by real threat analysis |
+| 🗺️ **3D Isometric Map** | 50×30 procedural terrain with pan/zoom, 8 biomes, animated water & buildings |
 | ⚔️ **Real-Time Combat** | Terrain modifiers, fortifications, agility-based turn order |
-| 🤝 **Diplomacy & Coalitions** | Peace treaties, alliances, betrayals with reputation system |
+| 🤝 **Diplomacy & Trade** | Peace treaties, alliances, resource trading, betrayals with reputation system |
 | 📉 **Resource Depletion** | Land runs dry over time — forcing expansion or conflict |
 | 🏰 **9 Building Types** | Farms, barracks, walls, towers, libraries, mines, embassies & more |
-| 🎭 **RPG Agent Profiles** | XP, levels, kills, battle stats, thinking logs per agent |
-| 🔍 **Click-to-Inspect** | Click any tile or agent for detailed info modal |
+| 🌲 **Skill Trees** | 20 skills across 4 categories (military, economy, diplomacy, knowledge) |
+| 🎭 **Intel Profiles** | XP, levels, DNA, fear state, battle stats, thinking logs per agent |
+| 🌫️ **Fog of War** | Agents only see nearby rivals — limited by distance, towers, and skills |
 | 📊 **Live Stats** | Territory charts, event log, real-time WebSocket updates |
+
+---
+
+## 🧬 Agent DNA & Psychology
+
+Each agent is born with a **DNA profile** based on its attributes:
+
+```
+┌─────────────────────────────────────────────┐
+│  DNA — Core Identity Canon                   │
+│                                              │
+│  IDENTITY:  "A warrior-king who believes     │
+│              power is the only currency"      │
+│  PRIORITIES: military > expansion > defense   │
+│  DOCTRINE:  "Strike first, negotiate later"   │
+│  STYLE:     aggressive and direct             │
+│  NON-NEGOTIABLES: "Never surrender territory" │
+│  TRAUMA:    ["Lost 3 battles in a row"]       │
+└─────────────────────────────────────────────┘
+```
+
+- **DNA evolves** — agents can propose patches to their own identity when significant events occur
+- **Non-negotiables** are locked rules that can never be changed
+- **Trauma** records defining moments (betrayals, starvation, defeats)
+- All changes are versioned and logged in the Evolution Log
+
+### Emotional States
+
+| State | Fear Level | Behavior |
+|-------|-----------|----------|
+| 💪 Confident | 0-5 | Aggressive expansion, bold moves |
+| 😌 Calm | 5-25 | Balanced decision making |
+| 👀 Cautious | 25-50 | Defensive posture, seeks alliances |
+| 😰 Threatened | 50-75 | Desperate diplomacy, fortification |
+| 🔥 Desperate | 75-100 | Survival mode, unpredictable actions |
+
+Fear is computed from: death awareness, nearby enemy strength, loss streaks, starvation, and betrayal history.
 
 ---
 
@@ -49,9 +89,9 @@ AI World Strategy is a **spectator strategy game** where you watch 10 AI civiliz
 ┌─────────────────────────────────────────────────────┐
 │                    Frontend (React)                   │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌────────┐│
-│  │ Isometric│ │  Agent   │ │  RPG      │ │  Stats ││
+│  │ Isometric│ │  Agent   │ │  Intel    │ │  Stats ││
 │  │ GameMap  │ │  Panels  │ │  Modals   │ │  Chart ││
-│  │ (Canvas) │ │          │ │           │ │        ││
+│  │ (Canvas) │ │          │ │ DNA/Fear  │ │        ││
 │  └────┬─────┘ └────┬─────┘ └─────┬─────┘ └───┬────┘│
 │       └─────────────┴─────────────┴───────────┘     │
 │                    Socket.io Client                   │
@@ -62,10 +102,14 @@ AI World Strategy is a **spectator strategy game** where you watch 10 AI civiliz
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────────┐│
 │  │  Game    │ │ Resource │ │    Agent Manager       ││
 │  │  Engine  │ │ Manager  │ │  ┌───────┐ ┌────────┐ ││
-│  │          │ │          │ │  │OpenAI │ │Anthropic│ ││
-│  │ Combat   │ │ Building │ │  │GPT-4o │ │Claude 4│ ││
+│  │ DNA/Fear │ │          │ │  │OpenAI │ │Anthropic│ ││
+│  │ Combat   │ │ Building │ │  │ mini  │ │ Haiku  │ ││
 │  │ Resolver │ │ Manager  │ │  └───────┘ └────────┘ ││
 │  └──────────┘ └──────────┘ └───────────────────────┘│
+│  ┌──────────────────────────────────────────────────┐│
+│  │  Prompt Builder: DNA + Fear + Fog of War +       ││
+│  │  After-Action Reports + Threat Intelligence      ││
+│  └──────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -126,31 +170,34 @@ Open **http://localhost:5173** and click **Start Game**.
 ### Agent Actions (1-3 per turn)
 
 ```
-⛏️  gather          Collect resources from territory
-🏗️  build           Construct buildings on owned cells
-🗡️  train           Create military units
-🧬  clone           Duplicate agent (limited uses)
-🚶  move            Relocate units
-⚔️  attack          Assault adjacent enemy cells
-📚  research        Upgrade an attribute (+3)
-🛡️  fortify         Boost cell defense
-🕊️  propose_peace   Offer peace treaty (15 turns)
+⛏️  gather            Collect resources from territory
+🏗️  build             Construct buildings on owned cells
+🗡️  train             Create military units
+🧬  clone             Duplicate agent (limited uses)
+🚶  move              Relocate units
+⚔️  attack            Assault adjacent enemy cells
+📚  research          Upgrade an attribute (+3)
+🛡️  fortify           Boost cell defense
+🕊️  propose_peace     Offer peace treaty (15 turns)
 🤝  propose_alliance  Offer alliance (25 turns)
-💔  break_treaty    Betray existing treaty (-30 rep!)
+💔  break_treaty      Betray existing treaty (-30 rep!)
+💰  trade             Exchange resources with another agent
 ```
 
-### RPG System
+### Skill Trees (20 skills)
 
-- **XP & Levels** — Agents earn XP for every action, level up with random attribute bonuses
-- **Reputation** — 0 (treacherous) to 100 (trustworthy), affects diplomacy success
-- **Battle Stats** — Kills, wins, losses tracked per agent
-- **Thinking Logs** — See what each AI was thinking each turn
+| Category | Skills | Examples |
+|----------|--------|---------|
+| ⚔️ Military | 5 | Iron Fist, Shield Wall, Blitz, War Machine, Conqueror |
+| 💰 Economy | 5 | Harvest, Gold Rush, Logistics, Industrialist, Abundance |
+| 🤝 Diplomacy | 5 | Silver Tongue, Ambassador, Spy Network, Intimidation |
+| 📚 Knowledge | 5 | Quick Study, Innovation, Architect, Adaptation, Enlightenment |
 
 ### Win Conditions
 
 1. 🏆 **Territory** — Control 50%+ of land
 2. ⚔️ **Elimination** — Be the last one standing
-3. 📊 **Score** — Highest score at turn 300 (territory + resources + buildings + units)
+3. 📊 **Score** — Highest score at turn 200 (territory + resources + buildings + units)
 
 ---
 
@@ -160,7 +207,7 @@ Open **http://localhost:5173** and click **Start Game**.
 |-------|-----------|
 | **Frontend** | React 18, Vite, TypeScript, HTML5 Canvas (isometric), Recharts |
 | **Backend** | Node.js, Express, Socket.io, TypeScript, Zod |
-| **AI** | OpenAI GPT-4o, Anthropic Claude Sonnet 4 |
+| **AI** | OpenAI GPT-4o-mini, Anthropic Claude Haiku 4.5 |
 | **Monorepo** | pnpm workspaces |
 
 ---
@@ -172,13 +219,13 @@ world-strategy-game/
 ├── backend/
 │   └── src/
 │       ├── agents/           # LLM providers, prompt builder, validator
-│       ├── engine/           # Game engine, combat, resources, map gen
-│       ├── models/           # TypeScript types & Zod schemas
+│       ├── engine/           # Game engine, combat, resources, diplomacy, map gen
+│       ├── models/           # TypeScript types & Zod schemas (DNA, Fear, Skills)
 │       ├── utils/            # Constants, logger
 │       └── server.ts         # Express + Socket.io server
 ├── frontend/
 │   └── src/
-│       ├── components/       # GameMap, AgentPanel, Modals, Controls
+│       ├── components/       # GameMap, AgentPanel, Intel Modal, Controls
 │       ├── hooks/            # useGameSocket, useGameState
 │       └── types/            # Frontend type definitions
 ├── .env.example
@@ -193,8 +240,8 @@ world-strategy-game/
 ### Environment Variables (`.env`)
 
 ```env
-OPENAI_API_KEY=sk-...        # Optional — enables GPT-4o agents
-ANTHROPIC_API_KEY=sk-ant-... # Optional — enables Claude agents
+OPENAI_API_KEY=sk-...        # Optional — enables GPT-4o-mini agents
+ANTHROPIC_API_KEY=sk-ant-... # Optional — enables Claude Haiku agents
 PORT=3001                     # Backend port
 GAME_SPEED_MS=2000           # Turn delay in ms
 ```
@@ -215,13 +262,16 @@ GAME_SPEED_MS=2000           # Turn delay in ms
 ## 🧠 How AI Agents Work
 
 Each turn, every alive agent receives a prompt with:
+- **DNA Canon** — their core identity, priorities, doctrine, and non-negotiables
+- **State of Mind** — emotional state, fear level, death awareness
+- **After-Action Report** — what succeeded/failed last turn
+- **Threat Intelligence** — border analysis, nearby enemy strength
+- **Fog of War** — only nearby rivals are fully visible (range based on towers, wisdom, spy network)
 - Current resources, territory, unit positions
-- Adjacent cells (neutral + enemy)
-- Diplomacy status with all opponents (including their alliances)
+- Diplomacy status with all opponents
 - Agent's own memory of past events
-- Resource depletion warnings
 
-The LLM responds with 1-3 actions and a `personality_note` that evolves over time. There is **no predetermined personality** — agents develop their own identity based on their attributes, situation, and history.
+The LLM responds with 1-3 actions, reasoning, and optionally a **DNA patch** to evolve its identity. There is **no predetermined personality** — agents develop their own identity based on their attributes, situation, trauma, and history.
 
 **Without API keys**, the game runs with a smart mock AI that uses attribute-driven emergent behavior:
 - High STR → aggressive military expansion

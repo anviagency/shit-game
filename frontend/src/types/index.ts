@@ -82,6 +82,36 @@ export const SKILL_DEFINITIONS: SkillDef[] = [
   { id: 'enlightenment', name: 'Enlightenment', category: 'knowledge', description: 'Double knowledge generation', maxLevel: 1, requires: 'adaptation' },
 ];
 
+export type EmotionalState = 'confident' | 'calm' | 'cautious' | 'threatened' | 'desperate';
+
+export interface FearProfile {
+  emotionalState: EmotionalState;
+  fearLevel: number;
+  deathAwareness: number;
+  threatMultiplier: number;
+  lossStreak: number;
+  betrayalCount: number;
+  starvationTurns: number;
+}
+
+export interface AgentDNA {
+  version: number;
+  identity: string;
+  priorities: string[];
+  doctrine: string[];
+  nonNegotiables: string[];
+  style: string;
+  trauma: string[];
+}
+
+export interface DNAPatch {
+  turn: number;
+  field: string;
+  oldValue: string;
+  newValue: string;
+  reason: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -108,6 +138,11 @@ export interface Agent {
   // Skills
   skills: AgentSkill[];
   skillPoints: number;
+  // DNA
+  dna: AgentDNA;
+  dnaLog: DNAPatch[];
+  // Fear
+  fear: FearProfile;
 }
 
 export interface TurnDecision {

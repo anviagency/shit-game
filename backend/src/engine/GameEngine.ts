@@ -1,4 +1,4 @@
-import { GameState, Agent, Action, TurnDecision, SKILL_DEFINITIONS, MapCell } from '../models/GameState.js';
+import { GameState, Agent, Action, TurnDecision, SKILL_DEFINITIONS, MapCell, AgentDNA, FearProfile, EmotionalState } from '../models/GameState.js';
 import { generateMap } from './MapGenerator.js';
 import { ResourceManager } from './ResourceManager.js';
 import { BuildingManager } from './BuildingManager.js';
@@ -94,10 +94,12 @@ export class GameEngine {
       }
 
       const provider = i % 2 === 0 ? 'openai' : 'anthropic';
+      const name = AGENT_NAMES[i];
+      const dna = this.generateInitialDNA(name, attrs);
 
       agents.push({
-        id: AGENT_NAMES[i].toLowerCase(),
-        name: AGENT_NAMES[i],
+        id: name.toLowerCase(),
+        name,
         color: AGENT_COLORS[i],
         personality: '',
         provider: provider as 'openai' | 'anthropic',
@@ -119,9 +121,87 @@ export class GameEngine {
         peakTerritory: 0,
         skills: SKILL_DEFINITIONS.map(s => ({ id: s.id, level: 0, unlockedAtTurn: 0 })),
         skillPoints: 1,
+        dna,
+        dnaLog: [],
+        fear: {
+          emotionalState: 'calm',
+          fearLevel: 0,
+          deathAwareness: 0,
+          threatMultiplier: 1,
+          lossStreak: 0,
+          betrayalCount: 0,
+          starvationTurns: 0,
+        },
       });
     }
     return agents;
+  }
+
+  /** Generate initial DNA based on agent's attributes — creates emergent personality */
+  private generateInitialDNA(name: string, attrs: typeof BASE_ATTRIBUTES): AgentDNA {
+    // Find dominant attribute
+    const sorted = [
+      { key: 'strength', val: attrs.strength },
+      { key: 'wisdom', val: attrs.wisdom },
+      { key: 'engineering', val: attrs.engineering },
+      { key: 'charisma', val: attrs.charisma },
+      { key: 'agility', val: attrs.agility },
+    ].sort((a, b) => b.val - a.val);
+
+    const dominant = sorted[0].key;
+    const secondary = sorted[1].key;
+
+    const identities: Record<string, string> = {
+      strength: `${name} is a born warrior-king who believes power is the only currency that matters.`,
+      wisdom: `${name} is a scholar-ruler who sees knowledge as the foundation of lasting empires.`,
+      engineering: `${name} is a master builder who knows that walls and farms win wars, not swords.`,
+      charisma: `${name} is a silver-tongued diplomat who prefers alliances to bloodshed.`,
+      agility: `${name} is a swift tactician who strikes fast and retreats before the enemy reacts.`,
+    };
+
+    const priorityMap: Record<string, string[]> = {
+      strength: ['military', 'expansion', 'defense'],
+      wisdom: ['knowledge', 'economy', 'diplomacy'],
+      engineering: ['economy', 'defense', 'expansion'],
+      charisma: ['diplomacy', 'trade', 'economy'],
+      agility: ['expansion', 'military', 'trade'],
+    };
+
+    const doctrinePool: Record<string, string[]> = {
+      strength: ['Strike first, negotiate later', 'Weakness invites conquest', 'Every border must be defended by force'],
+      wisdom: ['Know your enemy before you act', 'Invest in libraries before barracks', 'A wise ruler avoids unnecessary wars'],
+      engineering: ['Build before you fight', 'Every territory needs infrastructure', 'Fortify borders, starve the enemy'],
+      charisma: ['An ally is worth more than a captured city', 'Trade builds wealth, war destroys it', 'Reputation is your greatest asset'],
+      agility: ['Speed wins battles', 'Never stay in one place too long', 'Expand fast, consolidate later'],
+    };
+
+    const styles: Record<string, string> = {
+      strength: 'aggressive and direct',
+      wisdom: 'analytical and cautious',
+      engineering: 'methodical and patient',
+      charisma: 'persuasive and opportunistic',
+      agility: 'bold and unpredictable',
+    };
+
+    // Mix dominant + secondary doctrines
+    const doctrines = [
+      doctrinePool[dominant][0],
+      doctrinePool[secondary][Math.floor(Math.random() * doctrinePool[secondary].length)],
+    ];
+
+    return {
+      version: 1,
+      identity: identities[dominant],
+      priorities: priorityMap[dominant],
+      doctrine: doctrines,
+      nonNegotiables: [
+        'I follow the game rules — I only choose from available actions',
+        'I always cite concrete facts in my reasoning',
+        'I acknowledge my failures and adapt',
+      ],
+      style: styles[dominant],
+      trauma: [],
+    };
   }
 
   getState(): GameState {
@@ -195,6 +275,13 @@ export class GameEngine {
     // Phase 2: Tick diplomacy timers
     this.diplomacyManager.tickTimers(this.state.diplomacy);
 
+    // Phase 2.5: Compute fear/emotional state for each agent
+    const ownerCacheForFear = this.buildOwnershipCache();
+    for (const agent of this.state.agents) {
+      if (!agent.isAlive) continue;
+      this.computeFear(agent, ownerCacheForFear);
+    }
+
     // Phase 3: Get actions from all alive agents in parallel
     this.combatResolver.clearFortifications();
     const aliveAgents = this.state.agents.filter(a => a.isAlive);
@@ -233,9 +320,17 @@ export class GameEngine {
             agent.battlesWon++;
             this.grantXP(agent, XP_REWARDS.win_battle);
             const defender = this.findDefender(action);
-            if (defender) defender.battlesLost++;
+            if (defender) {
+              defender.battlesLost++;
+              if (defender.battlesLost >= 3) {
+                this.addTrauma(defender, `T${this.state.turn}: Suffered ${defender.battlesLost} defeats — my army is weakening`);
+              }
+            }
           } else if (result.message.includes('Defeat') || result.message.includes('Stalemate')) {
             agent.battlesLost++;
+            if (agent.battlesLost >= 3) {
+              this.addTrauma(agent, `T${this.state.turn}: Lost ${agent.battlesLost} battles — need to rethink strategy`);
+            }
             const defender = this.findDefender(action);
             if (defender) {
               defender.battlesWon++;
@@ -249,12 +344,25 @@ export class GameEngine {
               agent.kills++;
               this.grantXP(agent, XP_REWARDS.kill);
               logger.info(`${a.name} eliminated!`);
+              // DNA trauma: killer gets confidence, everyone remembers
+              this.addTrauma(agent, `T${this.state.turn}: Eliminated ${a.name} — proved my dominance`);
               for (const other of this.state.agents) {
                 if (other.isAlive) {
                   other.memory.push(`T${this.state.turn}: ${a.name} was eliminated by ${agent.name}!`);
+                  this.addTrauma(other, `T${this.state.turn}: Witnessed ${agent.name} destroy ${a.name}`);
                 }
               }
             }
+          }
+        }
+
+        // DNA trauma for betrayals + fear tracking
+        if (action.type === 'break_treaty' && result.success && action.targetAgentId) {
+          this.addTrauma(agent, `T${this.state.turn}: I broke my treaty with ${action.targetAgentId} — this changes who I am`);
+          const victim = this.state.agents.find(a => a.id === action.targetAgentId);
+          if (victim?.isAlive) {
+            victim.fear.betrayalCount++;
+            this.addTrauma(victim, `T${this.state.turn}: ${agent.name} betrayed our treaty — I will never forget this`);
           }
         }
 
@@ -280,6 +388,7 @@ export class GameEngine {
         agent.totalUnits -= lost;
         this.actionExecutor.removeUnitsFromMap(this.state, agent.id, lost);
         agent.memory.push(`T${this.state.turn}: STARVATION! Lost ${lost} units`);
+        if (lost >= 3) this.addTrauma(agent, `T${this.state.turn}: Starvation killed ${lost} of my people — I must secure food`);
         logger.info(`${agent.name} lost ${lost} units to starvation`);
       }
     }
@@ -408,6 +517,83 @@ export class GameEngine {
     const buildings = owned.filter(c => c.building).length * 20;
     const units = agent.totalUnits * 5;
     return territory + resources + buildings + units;
+  }
+
+  /** Compute fear level and emotional state based on game situation */
+  private computeFear(agent: Agent, ownerCache: Map<string, MapCell[]>): void {
+    const myTerritory = (ownerCache.get(agent.id) || []).length;
+    const myUnits = agent.totalUnits;
+
+    // Death awareness: how close to elimination
+    const territoryDanger = myTerritory <= 2 ? 80 : myTerritory <= 5 ? 50 : myTerritory <= 10 ? 20 : 0;
+    const unitDanger = myUnits <= 3 ? 70 : myUnits <= 6 ? 40 : myUnits <= 10 ? 15 : 0;
+    agent.fear.deathAwareness = Math.min(100, Math.max(territoryDanger, unitDanger));
+
+    // Threat multiplier: ratio of nearby enemy strength vs ours
+    let nearbyEnemyUnits = 0;
+    const myCells = ownerCache.get(agent.id) || [];
+    const myCellSet = new Set(myCells.map(c => `${c.x},${c.y}`));
+    const h = this.state.map.length;
+    const w = this.state.map[0]?.length || 0;
+
+    for (const cell of myCells) {
+      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const nx = cell.x + dx, ny = cell.y + dy;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        const neighbor = this.state.map[ny][nx];
+        if (neighbor.owner && neighbor.owner !== agent.id && neighbor.units > 0) {
+          nearbyEnemyUnits += neighbor.units;
+        }
+      }
+    }
+    agent.fear.threatMultiplier = myUnits > 0 ? nearbyEnemyUnits / myUnits : 10;
+
+    // Starvation tracking
+    if (agent.resources.food === 0 && myUnits > 3) {
+      agent.fear.starvationTurns++;
+    } else {
+      agent.fear.starvationTurns = Math.max(0, agent.fear.starvationTurns - 1);
+    }
+
+    // Loss streak: check if we lost territory since last turn
+    if (myTerritory < agent.peakTerritory * 0.7) {
+      agent.fear.lossStreak = Math.min(agent.fear.lossStreak + 1, 10);
+    } else {
+      agent.fear.lossStreak = Math.max(0, agent.fear.lossStreak - 1);
+    }
+
+    // Compute overall fear level (0-100)
+    let fear = 0;
+    fear += agent.fear.deathAwareness * 0.35;
+    fear += Math.min(100, agent.fear.threatMultiplier * 25) * 0.25;
+    fear += agent.fear.lossStreak * 8;
+    fear += agent.fear.starvationTurns * 12;
+    fear += agent.fear.betrayalCount * 8;
+    agent.fear.fearLevel = Math.min(100, Math.max(0, Math.round(fear)));
+
+    // Determine emotional state
+    let state: EmotionalState;
+    if (agent.fear.fearLevel >= 75) state = 'desperate';
+    else if (agent.fear.fearLevel >= 50) state = 'threatened';
+    else if (agent.fear.fearLevel >= 25) state = 'cautious';
+    else if (agent.fear.fearLevel <= 5 && myTerritory > 15) state = 'confident';
+    else state = 'calm';
+
+    // State change triggers trauma
+    if (agent.fear.emotionalState !== state) {
+      if (state === 'desperate' && agent.fear.emotionalState !== 'desperate') {
+        this.addTrauma(agent, `T${this.state.turn}: DESPERATE — on the verge of destruction, everything I built is crumbling`);
+      } else if (state === 'threatened' && agent.fear.emotionalState === 'calm') {
+        this.addTrauma(agent, `T${this.state.turn}: Enemies closing in — I feel the walls tightening`);
+      }
+      agent.fear.emotionalState = state;
+    }
+  }
+
+  /** Add a defining moment to an agent's DNA trauma list */
+  private addTrauma(agent: Agent, event: string): void {
+    agent.dna.trauma.push(event);
+    if (agent.dna.trauma.length > 5) agent.dna.trauma.shift();
   }
 
   private endGame(winnerId: string, reason: string): void {

@@ -17,7 +17,7 @@ export class OpenAIProvider implements LLMProvider {
       try {
         const response = await Promise.race([
           this.client.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-4o-mini',
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },

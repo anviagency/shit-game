@@ -116,6 +116,38 @@ export const SKILL_DEFINITIONS: SkillDef[] = [
   { id: 'enlightenment', name: 'Enlightenment', category: 'knowledge', description: 'Double knowledge generation', maxLevel: 1, requires: 'adaptation' },
 ];
 
+// ── Emotional State ──
+export type EmotionalState = 'confident' | 'calm' | 'cautious' | 'threatened' | 'desperate';
+
+export interface FearProfile {
+  emotionalState: EmotionalState;
+  fearLevel: number;           // 0-100: 0=fearless, 100=pure terror
+  deathAwareness: number;      // how close to elimination (0=safe, 100=dying)
+  threatMultiplier: number;    // computed from nearby enemy strength ratio
+  lossStreak: number;          // consecutive turns losing territory/battles
+  betrayalCount: number;       // how many times betrayed by others
+  starvationTurns: number;     // consecutive turns with food=0
+}
+
+// ── Agent DNA ──
+export interface AgentDNA {
+  version: number;
+  identity: string;          // "Who am I?" — 1-2 sentences
+  priorities: string[];      // Ordered list: e.g. ["economy", "expansion", "defense"]
+  doctrine: string[];        // Flexible beliefs: e.g. ["I never attack first", "Trade before war"]
+  nonNegotiables: string[];  // Locked rules that CANNOT be changed
+  style: string;             // Communication/ruling style: e.g. "cautious and calculated"
+  trauma: string[];          // Significant events that shaped this ruler
+}
+
+export interface DNAPatch {
+  turn: number;
+  field: 'identity' | 'priorities' | 'doctrine' | 'style';
+  oldValue: string;
+  newValue: string;
+  reason: string;
+}
+
 // ── Agent ──
 export const AgentSchema = z.object({
   id: z.string(),
@@ -143,7 +175,11 @@ export const AgentSchema = z.object({
   skills: z.array(AgentSkillSchema).default([]),
   skillPoints: z.number().default(0),  // earned from leveling up
 });
-export type Agent = z.infer<typeof AgentSchema>;
+export type Agent = z.infer<typeof AgentSchema> & {
+  dna: AgentDNA;
+  dnaLog: DNAPatch[];
+  fear: FearProfile;
+};
 
 // Separate from schema because it holds non-serializable-heavy data
 export interface AgentThinkingLog {
@@ -180,10 +216,18 @@ export const ActionSchema = z.object({
 export type Action = z.infer<typeof ActionSchema>;
 
 // ── LLM Response ──
+export const DNAPatchProposalSchema = z.object({
+  field: z.enum(['identity', 'priorities', 'doctrine', 'style']),
+  newValue: z.string(),
+  reason: z.string(),
+});
+export type DNAPatchProposal = z.infer<typeof DNAPatchProposalSchema>;
+
 export const LLMResponseSchema = z.object({
   actions: z.array(ActionSchema).min(1).max(3),
   reasoning: z.string().optional(),
-  personality_note: z.string().optional(),  // agent describes its evolving personality
+  personality_note: z.string().optional(),
+  dna_patch: DNAPatchProposalSchema.optional(),  // optional DNA evolution proposal
 });
 export type LLMResponse = z.infer<typeof LLMResponseSchema>;
 
