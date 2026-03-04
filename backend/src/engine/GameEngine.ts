@@ -1,4 +1,4 @@
-import { GameState, Agent, Action, DiplomaticRelation, TurnDecision } from '../models/GameState.js';
+import { GameState, Agent, Action, DiplomaticRelation, TurnDecision, SKILL_DEFINITIONS, AgentSkill } from '../models/GameState.js';
 import { generateMap } from './MapGenerator.js';
 import { ResourceManager } from './ResourceManager.js';
 import { BuildingManager } from './BuildingManager.js';
@@ -128,6 +128,8 @@ export class GameEngine {
         treatiesMade: 0,
         treatiesBroken: 0,
         peakTerritory: 0,
+        skills: SKILL_DEFINITIONS.map(s => ({ id: s.id, level: 0, unlockedAtTurn: 0 })),
+        skillPoints: 1, // Start with 1 skill point
       });
     }
     return agents;
@@ -146,16 +148,73 @@ export class GameEngine {
   }
 
   private grantXP(agent: Agent, amount: number): void {
+    // Apply Quick Study skill bonus
+    const quickStudy = agent.skills.find(s => s.id === 'quickStudy');
+    if (quickStudy && quickStudy.level > 0) {
+      amount = Math.floor(amount * (1 + quickStudy.level * 0.25));
+    }
+
     agent.xp += amount;
     while (agent.xp >= xpForLevel(agent.level)) {
       agent.xp -= xpForLevel(agent.level);
       agent.level++;
+      agent.skillPoints++; // Grant 1 skill point per level
       // Level-up bonus: +1 to a random attribute
       const keys = ['strength', 'wisdom', 'agility', 'engineering', 'charisma'] as const;
       const key = keys[Math.floor(Math.random() * keys.length)];
       (agent.attributes as any)[key] += 1;
       agent.attributes.hp += 5;
-      logger.info(`${agent.name} leveled up to ${agent.level}! +1 ${key}, +5 HP`);
+      logger.info(`${agent.name} leveled up to ${agent.level}! +1 ${key}, +5 HP, +1 skill point`);
+    }
+
+    // Auto-spend skill points (mock AI behavior)
+    this.autoSpendSkillPoints(agent);
+  }
+
+  private autoSpendSkillPoints(agent: Agent): void {
+    while (agent.skillPoints > 0) {
+      // Find upgradeable skills based on agent's personality/attributes
+      const upgradeable = SKILL_DEFINITIONS.filter(def => {
+        const skill = agent.skills.find(s => s.id === def.id);
+        if (!skill || skill.level >= def.maxLevel) return false;
+        // Check prerequisite
+        if (def.requires) {
+          const prereq = agent.skills.find(s => s.id === def.requires);
+          if (!prereq || prereq.level === 0) return false;
+        }
+        return true;
+      });
+
+      if (upgradeable.length === 0) break;
+
+      // Weight skill choice by agent's strongest attribute
+      const weights: Record<string, number> = {
+        military: agent.attributes.strength,
+        economy: agent.attributes.engineering,
+        diplomacy: agent.attributes.charisma,
+        knowledge: agent.attributes.wisdom,
+      };
+
+      // Weighted random selection
+      const weighted = upgradeable.map(s => ({
+        skill: s,
+        weight: weights[s.category] || 8,
+      }));
+      const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+      let roll = Math.random() * totalWeight;
+      let chosen = weighted[0].skill;
+      for (const w of weighted) {
+        roll -= w.weight;
+        if (roll <= 0) { chosen = w.skill; break; }
+      }
+
+      // Upgrade the skill
+      const skill = agent.skills.find(s => s.id === chosen.id)!;
+      skill.level++;
+      skill.unlockedAtTurn = this.state.turn;
+      agent.skillPoints--;
+      agent.memory.push(`T${this.state.turn}: Learned ${chosen.name} (Lv${skill.level})`);
+      logger.info(`${agent.name} learned ${chosen.name} Lv${skill.level}`);
     }
   }
 

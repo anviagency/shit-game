@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Agent, TurnDecision, DiplomaticRelation } from '../types';
+import { Agent, TurnDecision, DiplomaticRelation, SKILL_DEFINITIONS, SkillCategory } from '../types';
 
 interface Props {
   agent: Agent;
@@ -10,7 +10,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'profile' | 'thinking' | 'memory' | 'diplomacy';
+type Tab = 'profile' | 'skills' | 'thinking' | 'memory' | 'diplomacy';
 
 function hexToRgba(hex: string, a: number): string {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -23,8 +23,10 @@ export function AgentDetailModal({ agent, territory, thinking, diplomacy, agents
   const xpForNext = Math.floor(50 * Math.pow(1.4, agent.level - 1));
   const xpPct = Math.min(100, (agent.xp / xpForNext) * 100);
 
+  const unlockedSkills = agent.skills?.filter(s => s.level > 0).length || 0;
   const tabs: { key: Tab; label: string }[] = [
     { key: 'profile', label: 'Profile' },
+    { key: 'skills', label: `Skills (${unlockedSkills})` },
     { key: 'thinking', label: 'Thinking' },
     { key: 'memory', label: 'Memory' },
     { key: 'diplomacy', label: 'Diplomacy' },
@@ -120,6 +122,9 @@ export function AgentDetailModal({ agent, territory, thinking, diplomacy, agents
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
           {tab === 'profile' && (
             <ProfileTab agent={agent} territory={territory} xpPct={xpPct} xpForNext={xpForNext} />
+          )}
+          {tab === 'skills' && (
+            <SkillsTab agent={agent} />
           )}
           {tab === 'thinking' && (
             <ThinkingTab thinking={thinking} color={agent.color} />
@@ -322,6 +327,113 @@ function DiplomacyTab({ agent, diplomacy, agents }: {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+const CATEGORY_COLORS: Record<SkillCategory, string> = {
+  military: '#ef4444',
+  economy: '#fbbf24',
+  diplomacy: '#a78bfa',
+  knowledge: '#22d3ee',
+};
+
+const CATEGORY_ICONS: Record<SkillCategory, string> = {
+  military: '⚔',
+  economy: '💰',
+  diplomacy: '🤝',
+  knowledge: '📚',
+};
+
+function SkillsTab({ agent }: { agent: Agent }) {
+  const categories: SkillCategory[] = ['military', 'economy', 'diplomacy', 'knowledge'];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Skill points */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 12px',
+      }}>
+        <span style={{ fontSize: 11, color: '#888' }}>Available Skill Points</span>
+        <span style={{
+          fontSize: 16, fontWeight: 800,
+          color: (agent.skillPoints || 0) > 0 ? '#fbbf24' : '#444',
+        }}>
+          {agent.skillPoints || 0}
+        </span>
+      </div>
+
+      {/* Skill trees by category */}
+      {categories.map(cat => {
+        const catSkills = SKILL_DEFINITIONS.filter(s => s.category === cat);
+        const catColor = CATEGORY_COLORS[cat];
+
+        return (
+          <div key={cat}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+              fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1,
+              color: catColor,
+            }}>
+              <span>{CATEGORY_ICONS[cat]}</span>
+              <span>{cat}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {catSkills.map(def => {
+                const skill = agent.skills?.find(s => s.id === def.id);
+                const level = skill?.level || 0;
+                const isUnlocked = level > 0;
+                const isMaxed = level >= def.maxLevel;
+                const hasPrereq = !def.requires || (agent.skills?.find(s => s.id === def.requires)?.level || 0) > 0;
+
+                return (
+                  <div key={def.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', borderRadius: 6,
+                    background: isUnlocked
+                      ? `linear-gradient(90deg, ${catColor}15, transparent)`
+                      : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${isUnlocked ? catColor + '30' : 'rgba(255,255,255,0.04)'}`,
+                    opacity: hasPrereq ? 1 : 0.4,
+                  }}>
+                    {/* Skill level dots */}
+                    <div style={{ display: 'flex', gap: 2, minWidth: 30 }}>
+                      {Array.from({ length: def.maxLevel }).map((_, i) => (
+                        <div key={i} style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          background: i < level ? catColor : 'rgba(255,255,255,0.08)',
+                          boxShadow: i < level ? `0 0 6px ${catColor}60` : 'none',
+                        }} />
+                      ))}
+                    </div>
+                    {/* Name + description */}
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700,
+                        color: isUnlocked ? '#eee' : '#666',
+                      }}>
+                        {def.name}
+                        {isMaxed && <span style={{ color: catColor, marginLeft: 4, fontSize: 9 }}>MAX</span>}
+                      </div>
+                      <div style={{ fontSize: 9, color: isUnlocked ? '#aaa' : '#444' }}>
+                        {def.description}
+                      </div>
+                    </div>
+                    {/* Level indicator */}
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, minWidth: 24, textAlign: 'right',
+                      color: isUnlocked ? catColor : '#333',
+                    }}>
+                      {level}/{def.maxLevel}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

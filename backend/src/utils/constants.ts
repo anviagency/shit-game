@@ -24,7 +24,7 @@ export const BASE_RESOURCES = {
   knowledge: 0,
 };
 
-export const BASE_UNITS = 8;
+export const BASE_UNITS = 10;
 
 // ── Clone Costs ──
 export const CLONE_BASE_GOLD = 100;

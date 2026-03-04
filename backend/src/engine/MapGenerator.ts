@@ -89,8 +89,11 @@ export function generateMap(agentIds: string[]): MapCell[][] {
           }
           cell.owner = agentId;
           cell.richness = INITIAL_RICHNESS;
+          // Spread units: 2 on center, 1 on each border cell (total = 2 + 8*1 = 10)
           if (dy === 0 && dx === 0) {
-            cell.units = BASE_UNITS;
+            cell.units = 2;
+          } else {
+            cell.units = 1;
           }
         }
       }
